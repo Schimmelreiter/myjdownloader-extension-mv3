@@ -77,7 +77,7 @@ describe('LIVE update check against the real GitHub API', () => {
 
     // Show the real API payload alongside the verdict.
     const apiResp = await realGet(
-      'https://api.github.com/repos/magnetgrouplabs/myjdownloader-extension-mv3/releases/latest'
+      'https://api.github.com/repos/Schimmelreiter/myjdownloader-extension-mv3/releases/latest'
     );
     const release = await apiResp.json();
 
