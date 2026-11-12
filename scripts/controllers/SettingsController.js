@@ -107,14 +107,9 @@ angular.module('myjdWebextensionApp')
             }
         });
 
-        chrome.runtime.sendMessage({ name: "cnl-support" }, function (response) {
-            if (chrome.runtime.lastError) console.warn(chrome.runtime.lastError);
-            if (response !== undefined && response.data !== undefined && response.data.cnlSupported) {
-                $timeout(function () {
-                    $scope.isCnlSupported = response.data.cnlSupported;
-                }, 0);
-            }
-        });
+        // Click'n'Load is always handled by this extension (cnlInterceptor), so
+        // there is nothing to ask. The old "cnl-support" message had no handler
+        // in the service worker and only produced a warning.
 
         function initSettings() {
             storageService.getSettings(function (settings) {

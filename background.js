@@ -1441,6 +1441,38 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   return true;
  }
 
+ // --- Session storage for the offscreen document ---
+ // Offscreen documents only get chrome.runtime, so jdapi there asks the
+ // service worker for the stored login hashes (setting MYJD_RELOGIN) and
+ // hands it renewed sessions. Only the offscreen document may ask.
+ if (action === "myjd-relogin-store" || action === "offscreen-session-update") {
+  if (sender.tab || sender.url !== chrome.runtime.getURL('offscreen.html')) {
+   sendResponse({ error: 'forbidden' });
+   return true;
+  }
+  if (action === "offscreen-session-update") {
+   chrome.storage.local.get('myjd_session').then((stored) => {
+    // Only while logged in, so a late update cannot revive a logout.
+    if (stored.myjd_session && typeof request.data === 'string') {
+     return chrome.storage.local.set({ myjd_session: request.data });
+    }
+   }).then(() => sendResponse({ status: 'ok' }), () => sendResponse({ status: 'error' }));
+   return true;
+  }
+  chrome.storage.local.get(['MYJD_RELOGIN', 'myjd_relogin']).then((stored) => {
+   const enabled = stored.MYJD_RELOGIN === true;
+   if (request.op === 'clear' || !enabled) {
+    if (stored.myjd_relogin) chrome.storage.local.remove('myjd_relogin');
+    sendResponse({ record: null });
+   } else if (request.op === 'save') {
+    chrome.storage.local.set({ myjd_relogin: request.data }).then(() => sendResponse({ status: 'ok' }));
+   } else {
+    sendResponse({ record: stored.myjd_relogin || null });
+   }
+  }, () => sendResponse({ record: null }));
+  return true;
+ }
+
  // --- Wake check ---
  if (action === "wake") {
   sendResponse({ awake: true });
@@ -1540,7 +1572,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
  // Login
  if (action === "login") {
   let creds = request.data;
-  sendToOffscreen('offscreen-login', { credentials: creds }).then(result => {
+  sendToOffscreen('offscreen-login', { credentials: creds }).then(async result => {
+   // The offscreen document cannot write chrome.storage itself.
+   if (result && result.success && result.sessionData) {
+    await chrome.storage.local.set({ myjd_session: result.sessionData });
+    delete result.sessionData;
+   }
    sendResponse({ data: result });
   }).catch(err => {
    sendResponse({ error: err.message });
@@ -1560,7 +1597,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
  // Logout
  if (action === "logout") {
-  sendToOffscreen('offscreen-logout').then(result => {
+  sendToOffscreen('offscreen-logout').then(async result => {
+   await chrome.storage.local.remove(['myjd_session', 'myjd_relogin']);
    sendResponse(result);
   }).catch(err => {
    sendResponse({ error: err.message });
