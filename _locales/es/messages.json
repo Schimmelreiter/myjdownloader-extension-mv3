@@ -483,5 +483,11 @@
    },
    "ui_status_panel_no_device_connected_click_here": {
       "message": "Aprende más"
+   },
+   "ui_settings_myjd_relogin": {
+      "message": "Volver a iniciar sesión automáticamente"
+   },
+   "ui_settings_myjd_relogin_description": {
+      "message": "Si MyJDownloader descarta la sesión, la extensión vuelve a iniciar sesión por sí misma en lugar de cerrarla. Para ello se guardan dos hashes de tu contraseña en este perfil del navegador; la contraseña en sí no se guarda. Quien pueda leer tu perfil del navegador podría usarlos para entrar en tu cuenta de MyJDownloader. Se aplica a partir del próximo inicio de sesión. Desactivarlo o cerrar sesión borra los hashes."
    }
 }

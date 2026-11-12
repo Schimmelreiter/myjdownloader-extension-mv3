@@ -142,6 +142,18 @@ angular.module('myjdWebextensionApp').run(['$templateCache', function($templateC
     "            </small>\n" +
     "        </p>\n" +
     "    </div>\n" +
+    "    <div class=\"inlineSettingsContainer\" id=\"myjdReloginSettings\">\n" +
+    "        <label for=\"myjd_relogin\">\n" +
+    "            <input type=\"checkbox\" id=\"myjd_relogin\" ng-model=\"settings[settingsKeys.MYJD_RELOGIN.key]\" />{{'ui_settings_myjd_relogin' |\n" +
+    "            translate}}</label>\n" +
+    "\n" +
+    "        <div style=\"clear:both;\"></div>\n" +
+    "        <p class=\"description\">\n" +
+    "            <small>\n" +
+    "                {{'ui_settings_myjd_relogin_description' | translate}}\n" +
+    "            </small>\n" +
+    "        </p>\n" +
+    "    </div>\n" +
     "    <div class=\"inlineSettingsContainer\" id=\"clipboardSettings\" ng-if=\"!clipboardHistorySupported\">\n" +
     "        <label for=\"clipboard_observer_running\">\n" +
     "            <input type=\"checkbox\" id=\"clipboard_observer_running\"\n" +

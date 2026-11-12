@@ -337,6 +337,98 @@ define("coreRequest", ["coreCrypto", "coreCryptoUtils"], function (CoreCrypto, C
 });
 define("coreRequestHandler", ["coreCrypto", "coreCryptoUtils"], function (CoreCrypto, CryptoUtils) {
     var LOCAL_STORAGE_RECONNECT_LOCK_KEY = "jdapi/src/core/coreRequestHandler.js";
+
+    // Rebuild a CryptoJS WordArray from its JSON form ({words, sigBytes}).
+    function toWordArray(raw) {
+        if (!raw || !raw.words) return raw;
+        var wordArray = CoreCrypto.lib.WordArray.random(raw.sigBytes);
+        wordArray.words = raw.words.slice();
+        return wordArray;
+    }
+
+    // Session options as stored with JSON.stringify, back to usable options.
+    function restoreSessionOptions(raw) {
+        var parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+        if (!parsed) return null;
+        var options = $.extend({}, parsed);
+        ["serverEncryptionToken", "serverEncryptionTokenOld", "deviceEncryptionToken",
+            "deviceEncryptionTokenOld", "deviceSecret", "loginSecret"].forEach(function (key) {
+            if (parsed[key]) options[key] = toWordArray(parsed[key]);
+        });
+        return options;
+    }
+
+    function hasChromeStorage() {
+        return typeof chrome !== "undefined" && chrome && chrome.storage && chrome.storage.local;
+    }
+
+    function wordArrayToJSON(wordArray) {
+        return {words: wordArray.words.slice(), sigBytes: wordArray.sigBytes};
+    }
+
+    /*
+     * Optional automatic login after MyJDownloader drops a session.
+     * Only while the MYJD_RELOGIN setting is on (default off) the login hashes
+     * of the last password login are kept in chrome.storage.local, so a session
+     * the server rejected can be replaced without asking for the password.
+     * The plain password is never stored.
+     */
+    var ReloginStore = {
+        STORAGE_KEY: "myjd_relogin",
+        SETTING_KEY: "MYJD_RELOGIN",
+        save: function (email, loginSecret, deviceSecret) {
+            if (!hasChromeStorage()) return;
+            var self = this;
+            chrome.storage.local.get(self.SETTING_KEY, function (result) {
+                if (chrome.runtime && chrome.runtime.lastError) return;
+                if (!result || result[self.SETTING_KEY] !== true) {
+                    chrome.storage.local.remove(self.STORAGE_KEY);
+                    return;
+                }
+                var record = {};
+                record[self.STORAGE_KEY] = {
+                    email: email,
+                    loginSecret: wordArrayToJSON(loginSecret),
+                    deviceSecret: wordArrayToJSON(deviceSecret)
+                };
+                chrome.storage.local.set(record);
+            });
+        },
+        load: function () {
+            var def = $.Deferred();
+            if (!hasChromeStorage()) {
+                def.resolve(null);
+                return def;
+            }
+            var self = this;
+            chrome.storage.local.get([self.SETTING_KEY, self.STORAGE_KEY], function (result) {
+                if ((chrome.runtime && chrome.runtime.lastError) || !result) {
+                    def.resolve(null);
+                    return;
+                }
+                var record = result[self.STORAGE_KEY];
+                if (result[self.SETTING_KEY] !== true) {
+                    if (record) chrome.storage.local.remove(self.STORAGE_KEY);
+                    def.resolve(null);
+                    return;
+                }
+                if (!record || !record.email || !record.loginSecret || !record.deviceSecret) {
+                    def.resolve(null);
+                    return;
+                }
+                def.resolve({
+                    email: record.email,
+                    loginSecret: toWordArray(record.loginSecret),
+                    deviceSecret: toWordArray(record.deviceSecret)
+                });
+            });
+            return def;
+        },
+        clear: function () {
+            if (hasChromeStorage()) chrome.storage.local.remove(this.STORAGE_KEY);
+        }
+    };
+
     var JDAPICoreRequestHandler = function (appKey, transferEncoding, LOCAL_STORAGE_KEY, apiRoot) {
         this.appKey = appKey;
         this.transferEncoding = transferEncoding;
@@ -347,9 +439,18 @@ define("coreRequestHandler", ["coreCrypto", "coreCryptoUtils"], function (CoreCr
         connect: function (options) {
             var handshake = $.Deferred();
             //PERFORM LOGIN
-            if (options && options.email && options.pass) {
+            // A login either with the password or, for the automatic login
+            // after a dropped session, with the stored login hashes.
+            if (options && options.email && (options.pass || (options.loginSecret && options.deviceSecret))) {
                 // Generate login secret
-                CryptoUtils.processPassword(options);
+                if (options.pass) CryptoUtils.processPassword(options);
+                // initialiseConnection consumes loginSecret (CryptoJS concat
+                // mutates it), so keep copies for the optional automatic login.
+                var reloginSecrets = {
+                    email: options.email,
+                    loginSecret: options.loginSecret.clone(),
+                    deviceSecret: options.deviceSecret.clone()
+                };
 
                 // craft query string
                 var params = {};
@@ -381,6 +482,7 @@ define("coreRequestHandler", ["coreCrypto", "coreCryptoUtils"], function (CoreCr
                 auth.done((function (data) {
                     if (data.rid !== params.rid) return handshake.reject(undefined, "replay attack");
                     CryptoUtils.initialiseConnection(options, data.sessiontoken, data.regaintoken);
+                    ReloginStore.save(reloginSecrets.email, reloginSecrets.loginSecret, reloginSecrets.deviceSecret);
                     dataStore.setItem(this.LOCAL_STORAGE_KEY, JSON.stringify(options)).then(function () {
                         handshake.resolve(options);
                     });
@@ -392,25 +494,11 @@ define("coreRequestHandler", ["coreCrypto", "coreCryptoUtils"], function (CoreCr
                 dataStore.getItem(localStorageKey).then(function (result) {
                     var restoredOptions;
                     try {
-                        restoredOptions = JSON.parse(result[localStorageKey]);
+                        restoredOptions = restoreSessionOptions(result[localStorageKey]);
                         if (!restoredOptions) {
                             handshake.reject();
                         } else {
-                            options = $.extend({}, restoredOptions);
-                            //Convert JSON back to CoreCrypto.lib.WordArray instance
-                            if (restoredOptions.serverEncryptionToken) {
-                                options.serverEncryptionToken = CoreCrypto.lib.WordArray.random(restoredOptions.serverEncryptionToken.sigBytes);
-                                options.serverEncryptionToken.words = restoredOptions.serverEncryptionToken.words;
-                            }
-                            if (restoredOptions.deviceEncryptionToken) {
-                                options.deviceEncryptionToken = CoreCrypto.lib.WordArray.random(restoredOptions.deviceEncryptionToken.sigBytes);
-                                options.deviceEncryptionToken.words = restoredOptions.deviceEncryptionToken.words;
-                            }
-                            if (restoredOptions.deviceSecret) {
-                                options.deviceSecret = CoreCrypto.lib.WordArray.random(restoredOptions.deviceSecret.sigBytes);
-                                options.deviceSecret.words = restoredOptions.deviceSecret.words;
-                            }
-                            handshake.resolve(options);
+                            handshake.resolve(restoredOptions);
                         }
                     } catch (e) {
                         handshake.reject();
@@ -435,17 +523,31 @@ define("coreRequestHandler", ["coreCrypto", "coreCryptoUtils"], function (CoreCr
                 }
                 //lock exists and is not timed out
                 if (reconnectLock && (new Date().getTime() - reconnectLock.time) < 5000) {
-                    // wait for reconnect
-                    // listen to local storage
-                    window.addEventListener('storage', function (event) {
-                        if (event.key === this.LOCAL_STORAGE_KEY) {
-                            if (!e.newValue) {
+                    // Another context (popup, toolbar, offscreen document) is
+                    // reconnecting. Wait until it stored the renewed session and
+                    // take it over. The old code listened for a window "storage"
+                    // event, which chrome.storage never fires, and read an
+                    // undefined variable, so this branch hung forever.
+                    var waitStarted = new Date().getTime();
+                    var staleToken = options.sessiontoken;
+                    var poll = function () {
+                        dataStore.getItem(self.LOCAL_STORAGE_KEY).then(function (stored) {
+                            var fresh = null;
+                            try {
+                                fresh = restoreSessionOptions(stored && stored[self.LOCAL_STORAGE_KEY]);
+                            } catch (e) {
+                            }
+                            if (fresh && fresh.sessiontoken && fresh.sessiontoken !== staleToken) {
+                                $.extend(options, fresh);
+                                handshake.resolve();
+                            } else if (new Date().getTime() - waitStarted > 6000) {
                                 handshake.reject();
                             } else {
-                                handshake.resolve();
+                                setTimeout(poll, 250);
                             }
-                        }
-                    }, false);
+                        });
+                    };
+                    poll();
                 } else {
                     //create lock
                     dataStore.setItem(LOCAL_STORAGE_RECONNECT_LOCK_KEY, JSON.stringify({
@@ -463,7 +565,7 @@ define("coreRequestHandler", ["coreCrypto", "coreCryptoUtils"], function (CoreCr
                         params.rid = rid;
 
                         var queryString = action + "?" + $.param(params);
-                        queryString += "&signature=" + CoreCrypto.HmacSHA256(CoreCrypto.enc.Utf8.parse(queryString), options.serverEncryptionToken).toString(this.transferEncoding);
+                        queryString += "&signature=" + CoreCrypto.HmacSHA256(CoreCrypto.enc.Utf8.parse(queryString), options.serverEncryptionToken).toString(self.transferEncoding);
 
                         //reconnect yourself
                         var reauth = $.ajax({
@@ -475,8 +577,11 @@ define("coreRequestHandler", ["coreCrypto", "coreCryptoUtils"], function (CoreCr
                                 "* aesjson-server": CryptoUtils.decryptJSON.bind(this, options.serverEncryptionToken.firstHalf(), options.serverEncryptionToken.secondHalf())
                             }
                         });
-                        // if authentication fails, reject the handshake
-                        reauth.fail(handshake.reject.bind(handshake));
+                        // if authentication fails, release the lock and reject the handshake
+                        reauth.fail(function (error) {
+                            dataStore.removeItem(LOCAL_STORAGE_RECONNECT_LOCK_KEY);
+                            handshake.reject(error);
+                        });
                         // if the handshake gets rejected beforehand (e.g. because of a disconnect() call), abort the authentication request
                         handshake.fail(reauth.abort.bind(reauth));
                         // if authentication is successful, initialize connection
@@ -515,6 +620,9 @@ define("coreRequestHandler", ["coreCrypto", "coreCryptoUtils"], function (CoreCr
             return disconnect;
         }
     });
+
+    JDAPICoreRequestHandler.restoreSessionOptions = restoreSessionOptions;
+    JDAPICoreRequestHandler.ReloginStore = ReloginStore;
 
     return JDAPICoreRequestHandler;
 });
@@ -584,6 +692,73 @@ define("coreCore", ["coreCrypto", "coreCryptoUtils", "coreRequest", "coreRequest
     // Global Request Queue
     var jdapiRequestQueue = new Array();
     var coreRequestHandler = new JDAPICoreRequestHandler(APP_KEY, TRANSFER_ENCODING, LOCAL_STORAGE_KEY, API_ROOT);
+    var ReloginStore = JDAPICoreRequestHandler.ReloginStore;
+    var restoreSessionOptions = JDAPICoreRequestHandler.restoreSessionOptions;
+    // The extension's own copy of the session (popup, offscreen document,
+    // service worker warm start).
+    var EXTENSION_SESSION_KEY = "myjd_session";
+    var NETWORK_ERROR_TYPES = ["CONNECTION_REFUSED", "TIMEOUT", "UNKNOWN_ERROR"];
+
+    // Errors arrive either as API error objects ({type}) or, from the raw
+    // $.ajax calls of login and reconnect, as jqXHR objects.
+    function normalizedErrorType(error) {
+        if (!error) return null;
+        if (error.type) return error.type;
+        if (error.responseText) {
+            try {
+                var parsed = JSON.parse(error.responseText);
+                if (parsed && parsed.type) return parsed.type;
+            } catch (e) {
+            }
+        }
+        if (error.statusText === "timeout") return "TIMEOUT";
+        if (error.status === 0) return "CONNECTION_REFUSED";
+        return null;
+    }
+
+    function normalizedError(error) {
+        return {type: normalizedErrorType(error) || "AUTH_FAILED"};
+    }
+
+    function isNetworkErrorType(type) {
+        return NETWORK_ERROR_TYPES.indexOf(type) !== -1;
+    }
+
+    function usableSession(raw) {
+        var options = null;
+        try {
+            options = restoreSessionOptions(raw);
+        } catch (e) {
+        }
+        if (options && options.sessiontoken && options.serverEncryptionToken && options.deviceSecret) return options;
+        return null;
+    }
+
+    // A session another context stored after it renewed the shared session.
+    // jdapi writes this key on every login and renewal in every context, so a
+    // value that differs from the rejected session is the newer one.
+    function loadNewerStoredSession(staleToken) {
+        var def = $.Deferred();
+        dataStore.getItem(LOCAL_STORAGE_KEY).then(function (result) {
+            var stored = usableSession(result && result[LOCAL_STORAGE_KEY]);
+            def.resolve(stored && stored.sessiontoken !== staleToken ? stored : null);
+        }, function () {
+            def.resolve(null);
+        });
+        return def;
+    }
+
+    // Keep both stored copies on the renewed session so the next context
+    // that starts does not begin with a dead one.
+    function persistSharedSession(options) {
+        var serialized = JSON.stringify(options);
+        dataStore.setItem(LOCAL_STORAGE_KEY, serialized);
+        if (typeof chrome !== "undefined" && chrome && chrome.storage && chrome.storage.local) {
+            var update = {};
+            update[EXTENSION_SESSION_KEY] = serialized;
+            chrome.storage.local.set(update);
+        }
+    }
 
     // RID
     var lastrid = 0;
@@ -686,6 +861,8 @@ define("coreCore", ["coreCrypto", "coreCryptoUtils", "coreRequest", "coreRequest
             return reconnectDef;
         },
         disconnect: function () {
+            // An explicit logout also forgets the hashes for the automatic login.
+            ReloginStore.clear();
             //If already disconnected
             if (APIState.getAPIState() === DISCONNECTED_STATE) {
                 var ret = $.Deferred();
@@ -834,15 +1011,122 @@ define("coreCore", ["coreCrypto", "coreCryptoUtils", "coreRequest", "coreRequest
         _handleEnqueuedRequestsAndSetConnected: function () {
             APIState.setAPIState(CONNECTED_STATE);
             while (jdapiRequestQueue.length > 0) {
-                var queuedRequest = jdapiRequestQueue.shift();
-                var requestOptions = this._rebuildRequestOptions(queuedRequest.options);
-                // fire async, TODO: Could fail ?!?!
-                setTimeout(function () {
-                    var call = this._call(requestOptions, 1);
-                    call.done(queuedRequest.deferred.resolve);
-                    call.fail(queuedRequest.deferred.reject);
-                }.bind(this), 10);
+                // One closure per request: with a shared var every timeout
+                // sent the last queued request and the others never settled.
+                (function (queuedRequest) {
+                    var requestOptions = this._rebuildRequestOptions(queuedRequest.options);
+                    setTimeout(function () {
+                        var call = this._call(requestOptions, 1);
+                        call.done(queuedRequest.deferred.resolve);
+                        call.fail(queuedRequest.deferred.reject);
+                    }.bind(this), 10);
+                }).call(this, jdapiRequestQueue.shift());
             }
+        },
+        /*
+         * Recover from a session the server rejected (TOKEN_INVALID or
+         * AUTH_FAILED). In order:
+         *  1. take over a newer session another context already stored,
+         *  2. renew the session with the regain token,
+         *  3. log in again with the stored login hashes (setting MYJD_RELOGIN),
+         *  4. otherwise end the session locally, without /my/disconnect, so the
+         *     other contexts are not logged out by this one.
+         * Network errors keep the session and only fail the queued requests.
+         */
+        _recoverSession: function () {
+            if (this._recovery) return this._recovery;
+            var self = this;
+            var recovery = $.Deferred();
+            var staleToken = this.options && this.options.sessiontoken;
+            this._recovery = recovery;
+            APIState.setAPIState(RECONNECT_STATE);
+
+            function failQueued(error) {
+                var queued = jdapiRequestQueue.splice(0, jdapiRequestQueue.length);
+                queued.forEach(function (queuedRequest) {
+                    queuedRequest.deferred.reject(error);
+                });
+            }
+
+            function succeed(newOptions) {
+                newOptions.API_ROOT = API_ROOT;
+                self.options = newOptions;
+                persistSharedSession(newOptions);
+                self._recovery = null;
+                self._handleEnqueuedRequestsAndSetConnected();
+                recovery.resolve(newOptions);
+            }
+
+            function keepSession(error) {
+                // Offline or the server is unreachable: nothing says the
+                // session is gone, so keep it and let later requests retry.
+                self._recovery = null;
+                APIState.setAPIState(CONNECTED_STATE);
+                failQueued(error);
+                recovery.reject(error);
+            }
+
+            function endSession(error) {
+                self._recovery = null;
+                self.options = {};
+                dataStore.removeItem(LOCAL_STORAGE_KEY);
+                APIState.setAPIState(DISCONNECTED_STATE);
+                failQueued(error);
+                recovery.reject(error);
+            }
+
+            function tryRelogin(previousError) {
+                ReloginStore.load().then(function (record) {
+                    if (!record) {
+                        endSession(previousError);
+                        return;
+                    }
+                    coreRequestHandler.connect({
+                        email: record.email,
+                        loginSecret: record.loginSecret,
+                        deviceSecret: record.deviceSecret
+                    }).then(succeed, function (loginError) {
+                        var type = normalizedErrorType(loginError);
+                        if (isNetworkErrorType(type)) {
+                            keepSession(normalizedError(loginError));
+                            return;
+                        }
+                        // The stored hashes no longer work (password changed):
+                        // drop them, the user has to log in again.
+                        ReloginStore.clear();
+                        endSession(normalizedError(loginError));
+                    });
+                });
+            }
+
+            function tryReconnect() {
+                var options = self.options;
+                if (!options || !options.regaintoken || !options.serverEncryptionToken || !options.deviceSecret) {
+                    tryRelogin({type: "AUTH_FAILED"});
+                    return;
+                }
+                options.API_ROOT = options.API_ROOT || API_ROOT;
+                coreRequestHandler.reconnect(options, getRID()).then(function () {
+                    succeed(options);
+                }, function (reconnectError) {
+                    var type = normalizedErrorType(reconnectError);
+                    if (isNetworkErrorType(type)) {
+                        keepSession(normalizedError(reconnectError));
+                    } else {
+                        tryRelogin(normalizedError(reconnectError));
+                    }
+                });
+            }
+
+            loadNewerStoredSession(staleToken).then(function (stored) {
+                if (stored) {
+                    succeed(stored);
+                } else {
+                    tryReconnect();
+                }
+            }, tryReconnect);
+
+            return recovery;
         },
         // function that either makes or enqueues the request dependent on API state
         _call: function (reqOptions, count) {
@@ -854,16 +1138,23 @@ define("coreCore", ["coreCrypto", "coreCryptoUtils", "coreRequest", "coreRequest
                 // Initial call successful, just resolve the deferred
                 initialRequest.done(def.resolve);
                 initialRequest.fail(function (error) {
-                    if (error.type && "TOKEN_INVALID" === error.type && count === 0) {
+                    var errorType = error && error.type;
+                    // MyJDownloader answers AUTH_FAILED instead of TOKEN_INVALID
+                    // for some sessions it dropped, e.g. after hours, after the
+                    // computer slept, or when another context of this extension
+                    // renewed the shared session first. Both are recovered the
+                    // same way; only a rejected login ends the session.
+                    if ((errorType === "TOKEN_INVALID" || errorType === "AUTH_FAILED") && count === 0) {
                         jdapiRequestQueue.push({
                             deferred: def,
                             options: reqOptions
                         });
-                        this.reconnect();
-                    } else if (error.type && "AUTH_FAILED" === error.type) {
-                        console.error("AUTH FAILED", reqOptions, " ERROR ", error);
+                        this._recoverSession();
+                    } else if (errorType === "AUTH_FAILED") {
+                        // Rejected again right after the session was renewed:
+                        // an error for this request, not a reason to log out.
+                        console.warn("[jdapi] request rejected after session renewal", reqOptions.jdAction, errorType);
                         def.reject(error);
-                        this.disconnect();
                     } else {
                         // TODO: Probably causes disc if listen fails
                         def.reject(error);

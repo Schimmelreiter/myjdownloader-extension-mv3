@@ -532,5 +532,11 @@
    },
    "ui_status_panel_no_device_connected_click_here": {
       "message": "Click here"
+   },
+   "ui_settings_myjd_relogin": {
+      "message": "Log in again automatically"
+   },
+   "ui_settings_myjd_relogin_description": {
+      "message": "When MyJDownloader drops the session, log in again on its own instead of logging you out. For this, two hashes of your password are kept in this browser profile; the password itself is not stored. Anyone who can read your browser profile could use them to sign in to your MyJDownloader account. Takes effect at your next login. Switching it off or logging out deletes the hashes."
    }
 }

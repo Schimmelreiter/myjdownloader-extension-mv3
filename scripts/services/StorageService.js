@@ -23,6 +23,8 @@ angular.module('myjdWebextensionApp')
             this.SETTINGS_DEFAULT_OVERWRITE_PACKAGIZER = "DEFAULT_OVERWRITE_PACKAGIZER";
             this.SETTINGS_CLICKNLOAD_ACTIVE = "CLICKNLOAD_ACTIVE";
             this.SETTINGS_RESOLVE_IN_BROWSER = "RESOLVE_IN_BROWSER";
+            this.SETTINGS_MYJD_RELOGIN = "MYJD_RELOGIN";
+            this.MYJD_RELOGIN_STORAGE_KEY = "myjd_relogin";
             this.SaveForLaterDevice = {id: "SaveForLaterDevice", name: "Save for later"};
             this.AskEveryTimeDevice = {id: "AskEveryTimeDevice", name: "Ask every time"};
             this.LastUsedDevice = {id: "LastUsedDevice", name: "Last Used"};
@@ -89,16 +91,21 @@ angular.module('myjdWebextensionApp')
                 RESOLVE_IN_BROWSER: {
                     key: StorageService.SETTINGS_RESOLVE_IN_BROWSER,
                     defaultValue: true
+                },
+                MYJD_RELOGIN: {
+                    key: StorageService.SETTINGS_MYJD_RELOGIN,
+                    defaultValue: false
                 }
             };
 
+            // Write only the given key. Reading everything and writing it all
+            // back put stale copies of keys other contexts had changed in the
+            // meantime back into storage, among them the MyJDownloader session.
             this.set = function (key, value, callback, error) {
                 if (key) {
-                    StorageService.getAll(function (data) {
-                        let newData = data || {};
-                        newData[key] = value;
-                        chrome.storage.local.set(newData, callback);
-                    });
+                    let newData = {};
+                    newData[key] = value;
+                    chrome.storage.local.set(newData, callback);
                 } else {
                     if (error) error("no key provided");
                 }
@@ -117,16 +124,14 @@ angular.module('myjdWebextensionApp')
             };
 
             this.setCollection = function (collection, callback, error) {
-                StorageService.getAll(function (data) {
-                    let newData = data || {};
-                    $.each(collection, function (index, val) {
-                        if (!val.key || !val.value) {
-                            if (error) error("invalid argument, needs [{key: 'key', value: 'value'}]");
-                        }
-                        newData[val.key] = val.value;
-                    });
-                    chrome.storage.local.set(newData, callback);
+                let newData = {};
+                $.each(collection, function (index, val) {
+                    if (!val.key || !val.value) {
+                        if (error) error("invalid argument, needs [{key: 'key', value: 'value'}]");
+                    }
+                    newData[val.key] = val.value;
                 });
+                chrome.storage.local.set(newData, callback);
             };
 
             this.getCollection = function (keys, callback, error) {

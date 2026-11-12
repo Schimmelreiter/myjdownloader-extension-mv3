@@ -92,6 +92,7 @@ angular.module('myjdWebextensionApp')
         $scope.settings[$scope.settingsKeys.CLICKNLOAD_ACTIVE.key] = $scope.settingsKeys[$scope.settingsKeys.CLICKNLOAD_ACTIVE.key].defaultValue;
         $scope.settings[$scope.settingsKeys.CAPTCHA_PRIVACY_MODE.key] = $scope.settingsKeys[$scope.settingsKeys.CAPTCHA_PRIVACY_MODE.key].defaultValue;
         $scope.settings[$scope.settingsKeys.RESOLVE_IN_BROWSER.key] = $scope.settingsKeys[$scope.settingsKeys.RESOLVE_IN_BROWSER.key].defaultValue;
+        $scope.settings[$scope.settingsKeys.MYJD_RELOGIN.key] = $scope.settingsKeys[$scope.settingsKeys.MYJD_RELOGIN.key].defaultValue;
 
         initSettings();
 
@@ -192,6 +193,7 @@ angular.module('myjdWebextensionApp')
             "settings." + $scope.settingsKeys.CAPTCHA_PRIVACY_MODE.key,
             "settings." + $scope.settingsKeys.CLICKNLOAD_ACTIVE.key,
             "settings." + $scope.settingsKeys.RESOLVE_IN_BROWSER.key,
+            "settings." + $scope.settingsKeys.MYJD_RELOGIN.key,
             "settings." + $scope.settingsKeys.DEFAULT_OVERWRITE_PACKAGIZER.key],
             function (newValues, oldValues, scope) {
                 if (!$scope.isAfterInit) return;
@@ -234,6 +236,16 @@ angular.module('myjdWebextensionApp')
                     key: $scope.settingsKeys.RESOLVE_IN_BROWSER.key,
                     value: scope.settings[$scope.settingsKeys.RESOLVE_IN_BROWSER.key]
                 });
+
+                var reloginEnabled = scope.settings[$scope.settingsKeys.MYJD_RELOGIN.key] === true;
+                changes.push({
+                    key: $scope.settingsKeys.MYJD_RELOGIN.key,
+                    value: reloginEnabled
+                });
+                // Switched off: forget the stored login hashes right away.
+                if (!reloginEnabled) {
+                    chrome.storage.local.remove(storageService.MYJD_RELOGIN_STORAGE_KEY);
+                }
 
                 if (scope.settings[$scope.settingsKeys.COUNTDOWN_VALUE.key] === undefined || (scope.settings[$scope.settingsKeys.COUNTDOWN_VALUE.key] < 1)) {
                     scope.settings[$scope.settingsKeys.COUNTDOWN_VALUE.key] = 1;
