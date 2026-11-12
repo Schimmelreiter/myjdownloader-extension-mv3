@@ -1,0 +1,53 @@
+name: Auto Release
+
+# Releases a new version as soon as the version in manifest.json changes on
+# master: creates the tag v<version> and runs release.yml for it. A version
+# that already has a tag is skipped, so other changes to manifest.json do
+# not release anything.
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - manifest.json
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      release: ${{ steps.check.outputs.release }}
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Check for a new version
+      id: check
+      run: |
+        VERSION=$(node -p "require('./manifest.json').version")
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" > /dev/null; then
+          echo "Tag v$VERSION exists already, nothing to release."
+          echo "release=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "New version $VERSION."
+          echo "release=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Create tag
+      if: steps.check.outputs.release == 'true'
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git tag -a "v${{ steps.check.outputs.version }}" -m "v${{ steps.check.outputs.version }}"
+        git push origin "v${{ steps.check.outputs.version }}"
+
+  release:
+    needs: tag
+    if: needs.tag.outputs.release == 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      version: ${{ needs.tag.outputs.version }}
+    secrets: inherit

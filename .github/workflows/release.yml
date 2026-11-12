@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  # Called by auto-release.yml when the version in manifest.json changes on
+  # master. A tag pushed with GITHUB_TOKEN does not start other workflows,
+  # so auto-release.yml runs this one itself.
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version without the leading v, e.g. 2026.11.1'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -17,7 +26,8 @@ jobs:
     - name: Extract Version
       id: version
       run: |
-        VERSION=${GITHUB_REF#refs/tags/v}
+        VERSION="${{ inputs.version }}"
+        if [ -z "$VERSION" ]; then VERSION=${GITHUB_REF#refs/tags/v}; fi
         echo "version=$VERSION" >> $GITHUB_OUTPUT
 
     - name: Validate Version Format
