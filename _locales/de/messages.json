@@ -501,5 +501,11 @@
    },
    "ui_status_panel_no_device_connected_click_here": {
       "message": "Mehr erfahren"
+   },
+   "ui_settings_myjd_relogin": {
+      "message": "Automatisch neu anmelden"
+   },
+   "ui_settings_myjd_relogin_description": {
+      "message": "Wenn MyJDownloader die Sitzung verwirft, meldet sich die Erweiterung selbst neu an, statt dich abzumelden. Dafür werden zwei Hashes deines Passworts in diesem Browserprofil gespeichert, das Passwort selbst nicht. Wer dein Browserprofil lesen kann, könnte sich damit bei deinem MyJDownloader-Konto anmelden. Wirkt ab der nächsten Anmeldung. Ausschalten oder Abmelden löscht die Hashes."
    }
 }
