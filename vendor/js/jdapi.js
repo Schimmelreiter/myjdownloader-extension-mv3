@@ -373,12 +373,42 @@ define("coreRequestHandler", ["coreCrypto", "coreCryptoUtils"], function (CoreCr
      * the server rejected can be replaced without asking for the password.
      * The plain password is never stored.
      */
+    // Offscreen documents only get chrome.runtime, no chrome.storage; there
+    // the service worker keeps the hashes and answers by message.
+    function viaServiceWorker(op, data) {
+        var def = $.Deferred();
+        try {
+            chrome.runtime.sendMessage({action: "myjd-relogin-store", op: op, data: data}, function (response) {
+                if (chrome.runtime.lastError) {
+                    def.resolve(null);
+                    return;
+                }
+                def.resolve(response || null);
+            });
+        } catch (e) {
+            def.resolve(null);
+        }
+        return def;
+    }
+
+    function hasRuntimeMessaging() {
+        return typeof chrome !== "undefined" && chrome && chrome.runtime && typeof chrome.runtime.sendMessage === "function";
+    }
+
     var ReloginStore = {
         STORAGE_KEY: "myjd_relogin",
         SETTING_KEY: "MYJD_RELOGIN",
         save: function (email, loginSecret, deviceSecret) {
-            if (!hasChromeStorage()) return;
             var self = this;
+            var data = {
+                email: email,
+                loginSecret: wordArrayToJSON(loginSecret),
+                deviceSecret: wordArrayToJSON(deviceSecret)
+            };
+            if (!hasChromeStorage()) {
+                if (hasRuntimeMessaging()) viaServiceWorker("save", data);
+                return;
+            }
             chrome.storage.local.get(self.SETTING_KEY, function (result) {
                 if (chrome.runtime && chrome.runtime.lastError) return;
                 if (!result || result[self.SETTING_KEY] !== true) {
@@ -386,21 +416,34 @@ define("coreRequestHandler", ["coreCrypto", "coreCryptoUtils"], function (CoreCr
                     return;
                 }
                 var record = {};
-                record[self.STORAGE_KEY] = {
-                    email: email,
-                    loginSecret: wordArrayToJSON(loginSecret),
-                    deviceSecret: wordArrayToJSON(deviceSecret)
-                };
+                record[self.STORAGE_KEY] = data;
                 chrome.storage.local.set(record);
             });
         },
         load: function () {
             var def = $.Deferred();
+            var self = this;
+            function deliver(record) {
+                if (!record || !record.email || !record.loginSecret || !record.deviceSecret) {
+                    def.resolve(null);
+                    return;
+                }
+                def.resolve({
+                    email: record.email,
+                    loginSecret: toWordArray(record.loginSecret),
+                    deviceSecret: toWordArray(record.deviceSecret)
+                });
+            }
             if (!hasChromeStorage()) {
-                def.resolve(null);
+                if (!hasRuntimeMessaging()) {
+                    def.resolve(null);
+                    return def;
+                }
+                viaServiceWorker("load").then(function (response) {
+                    deliver(response && response.record);
+                });
                 return def;
             }
-            var self = this;
             chrome.storage.local.get([self.SETTING_KEY, self.STORAGE_KEY], function (result) {
                 if ((chrome.runtime && chrome.runtime.lastError) || !result) {
                     def.resolve(null);
@@ -412,20 +455,16 @@ define("coreRequestHandler", ["coreCrypto", "coreCryptoUtils"], function (CoreCr
                     def.resolve(null);
                     return;
                 }
-                if (!record || !record.email || !record.loginSecret || !record.deviceSecret) {
-                    def.resolve(null);
-                    return;
-                }
-                def.resolve({
-                    email: record.email,
-                    loginSecret: toWordArray(record.loginSecret),
-                    deviceSecret: toWordArray(record.deviceSecret)
-                });
+                deliver(record);
             });
             return def;
         },
         clear: function () {
-            if (hasChromeStorage()) chrome.storage.local.remove(this.STORAGE_KEY);
+            if (hasChromeStorage()) {
+                chrome.storage.local.remove(this.STORAGE_KEY);
+            } else if (hasRuntimeMessaging()) {
+                viaServiceWorker("clear");
+            }
         }
     };
 
@@ -739,9 +778,21 @@ define("coreCore", ["coreCrypto", "coreCryptoUtils", "coreRequest", "coreRequest
     // value that differs from the rejected session is the newer one.
     function loadNewerStoredSession(staleToken) {
         var def = $.Deferred();
+        function newer(raw) {
+            var stored = usableSession(raw);
+            return stored && stored.sessiontoken !== staleToken ? stored : null;
+        }
         dataStore.getItem(LOCAL_STORAGE_KEY).then(function (result) {
-            var stored = usableSession(result && result[LOCAL_STORAGE_KEY]);
-            def.resolve(stored && stored.sessiontoken !== staleToken ? stored : null);
+            var found = newer(result && result[LOCAL_STORAGE_KEY]);
+            // The offscreen document has no chrome.storage and keeps its
+            // session in localStorage, which the other pages share.
+            if (!found) {
+                try {
+                    found = newer(window.localStorage.getItem(LOCAL_STORAGE_KEY));
+                } catch (e) {
+                }
+            }
+            def.resolve(found);
         }, function () {
             def.resolve(null);
         });
@@ -757,6 +808,14 @@ define("coreCore", ["coreCrypto", "coreCryptoUtils", "coreRequest", "coreRequest
             var update = {};
             update[EXTENSION_SESSION_KEY] = serialized;
             chrome.storage.local.set(update);
+        } else if (typeof chrome !== "undefined" && chrome && chrome.runtime && typeof chrome.runtime.sendMessage === "function") {
+            // Offscreen document: the service worker stores it.
+            try {
+                chrome.runtime.sendMessage({action: "offscreen-session-update", data: serialized}, function () {
+                    void chrome.runtime.lastError;
+                });
+            } catch (e) {
+            }
         }
     }
 

@@ -85,16 +85,16 @@ require(['jdapi'], function(API) {
         return;
     }
 
-    // Wait for chrome.storage to be available (race condition on extension reload)
-    function waitForChromeStorage(callback, attempts) {
-        if (chrome && chrome.storage && chrome.storage.local) {
-            callback();
-        } else if (attempts > 0) {
-            setTimeout(function() { waitForChromeStorage(callback, attempts - 1); }, 100);
-        } else {
-            console.warn('[Offscreen] chrome.storage not available, proceeding with localStorage fallback');
-            callback();
+    // Offscreen documents only get chrome.runtime, never chrome.storage
+    // (documented Chrome behavior), so there is nothing to wait for: the
+    // session comes from localStorage or from the service worker's
+    // offscreen-restore-session message. The old 3 s wait ended in a
+    // warning on every start.
+    function waitForChromeStorage(callback) {
+        if (!(chrome && chrome.storage && chrome.storage.local)) {
+            console.log('[Offscreen] No chrome.storage in offscreen documents, using the localStorage session');
         }
+        callback();
     }
 
     waitForChromeStorage(function() {
@@ -155,7 +155,7 @@ require(['jdapi'], function(API) {
             console.error('[Offscreen] Error stack:', e.stack);
             isReady = true;
         }
-    }, 30);
+    });
 }, function(err) {
     console.error('[Offscreen] Failed to load jdapi module:', err);
     console.error('[Offscreen] RequireJS error:', JSON.stringify(err));
@@ -244,10 +244,11 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
             var creds = request.credentials || {};
             api.connect({ email: creds.email, pass: creds.password }).done(function(data) {
                 var sessionData = JSON.stringify(api.jdAPICore.options);
-                chrome.storage.local.set({ 'myjd_session': sessionData });
+                // No chrome.storage in offscreen documents: the service
+                // worker stores the session from this response.
                 localStorage.setItem("jdapi/src/core/core.js", sessionData);
                 reportConnectionState(true);
-                sendResponse({ success: true, data: data });
+                sendResponse({ success: true, data: data, sessionData: sessionData });
             }).fail(function(err) {
                 reportConnectionState(false);
                 sendResponse({ success: false, error: err.message || err });
@@ -260,7 +261,6 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
                 return true;
             }
             api.disconnect().always(function() {
-                chrome.storage.local.remove('myjd_session');
                 localStorage.removeItem("jdapi/src/core/core.js");
                 api = null;
                 reportConnectionState(false);

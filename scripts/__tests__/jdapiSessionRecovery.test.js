@@ -267,6 +267,39 @@ describe('jdapi session recovery', () => {
     expect(core.getAPIState()).toBe(CONNECTED);
   });
 
+  it('in the offscreen document (no chrome.storage) asks the service worker for the hashes', async () => {
+    const savedLocal = global.chrome.storage.local;
+    const savedSend = global.chrome.runtime.sendMessage;
+    delete global.chrome.storage.local;
+    const messages = [];
+    global.chrome.runtime.sendMessage = jest.fn((msg, cb) => {
+      messages.push(msg);
+      const response = msg.op === 'load' ? {
+        record: {
+          email: 'user@example.org',
+          loginSecret: { words: sha('login').words, sigBytes: 32 },
+          deviceSecret: { words: sha('devicesecret').words, sigBytes: 32 }
+        }
+      } : { status: 'ok' };
+      if (cb) setTimeout(() => cb(response), 0);
+    });
+    try {
+      window.localStorage.clear();
+      const { core, calls } = await setup({ responses: [authFailed], relogin: () => resolved(session('s8')) });
+
+      const result = await core.serverCall('/my/listdevices');
+
+      expect(result).toEqual({ data: 'ok:s8' });
+      expect(calls.connect[1].loginSecret.words).toEqual(sha('login').words);
+      expect(messages.map((m) => m.action + ':' + (m.op || ''))).toEqual(
+        expect.arrayContaining(['myjd-relogin-store:load', 'offscreen-session-update:']));
+      expect(JSON.parse(window.localStorage.getItem(CORE_KEY)).sessiontoken).toBe('s8');
+    } finally {
+      global.chrome.storage.local = savedLocal;
+      global.chrome.runtime.sendMessage = savedSend;
+    }
+  });
+
   it('an explicit logout deletes the stored hashes', async () => {
     const { core } = await setup();
     local.myjd_relogin = { email: 'x' };
