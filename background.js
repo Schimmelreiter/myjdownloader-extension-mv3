@@ -304,8 +304,8 @@ function updateBadge() {
 // policy). The user still updates manually from the releases page.
 const UPDATE_CHECK_ALARM = 'updateCheck';
 const UPDATE_STORAGE_KEY = 'myjd_update_available';
-const RELEASES_API = 'https://api.github.com/repos/magnetgrouplabs/myjdownloader-extension-mv3/releases/latest';
-const RELEASES_PAGE = 'https://github.com/magnetgrouplabs/myjdownloader-extension-mv3/releases/latest';
+const RELEASES_API = 'https://api.github.com/repos/Schimmelreiter/myjdownloader-extension-mv3/releases/latest';
+const RELEASES_PAGE = 'https://github.com/Schimmelreiter/myjdownloader-extension-mv3/releases/latest';
 
 // Numeric per-component compare so zero-padded tags ("2026.07.20") and the
 // 4th-component re-release scheme ("2026.7.13.1" > "2026.7.13") both order
