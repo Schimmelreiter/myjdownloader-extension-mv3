@@ -86,7 +86,7 @@
  "host_permissions": [ "<all_urls>", "http://127.0.0.1:9666/*", "http://localhost:9666/*" ],
  "short_name": "MyJDownloader",
  "update_url": "https://clients2.google.com/service/update2/crx",
- "version": "2026.11.1",
+ "version": "2026.11.2",
 "web_accessible_resources": [ {
   "resources": [ "toolbar.html", "autograbber-indicator.html" ],
   "matches": [ "*://*/*" ]
