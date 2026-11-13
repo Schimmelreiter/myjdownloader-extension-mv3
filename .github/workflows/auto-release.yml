@@ -1,15 +1,13 @@
 name: Auto Release
 
-# Releases a new version as soon as the version in manifest.json changes on
-# master: creates the tag v<version> and runs release.yml for it. A version
-# that already has a tag is skipped, so other changes to manifest.json do
-# not release anything.
+# Releases a new version as soon as master carries a manifest.json version
+# without a tag yet: creates the tag v<version> and runs release.yml for it.
+# Every push to master is checked (a path filter missed force pushes); a
+# version that already has a tag is skipped within seconds.
 on:
   push:
     branches:
       - master
-    paths:
-      - manifest.json
 
 permissions:
   contents: write
